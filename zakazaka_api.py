@@ -15,22 +15,14 @@ HEADERS = {
 
 
 async def search_zakazaka(session: aiohttp.ClientSession, query: str) -> dict | None:
-    """Ищем игру на zaka-zaka.com."""
     url = SEARCH_URL.format(query=query.replace(" ", "+"))
-
     try:
-        async with session.get(
-            url,
-            headers=HEADERS,
-            timeout=aiohttp.ClientTimeout(total=10),
-        ) as resp:
+        async with session.get(url, headers=HEADERS, timeout=aiohttp.ClientTimeout(total=10)) as resp:
             logger.info(f"ZakaZaka status: {resp.status}")
             if resp.status != 200:
                 return None
-
             html = await resp.text()
             return parse_zakazaka_html(html, query)
-
     except Exception as e:
         logger.error(f"ZakaZaka error: {e}")
         return None
@@ -38,36 +30,46 @@ async def search_zakazaka(session: aiohttp.ClientSession, query: str) -> dict | 
 
 def parse_zakazaka_html(html: str, query: str) -> dict | None:
     soup = BeautifulSoup(html, "html.parser")
-    query_words = query.lower().split()
+    query_lower = query.lower()
+    query_words = query_lower.split()
+
+    # Цифры в запросе — обязательны для сиквелов (2, 3, VII и т.д.)
+    query_numbers = [w for w in query_words if re.match(r'^[\divxlc]+$', w) and not w.isalpha()]
 
     cards = soup.find_all("a", class_="game-block")
     logger.info(f"ZakaZaka: found {len(cards)} cards")
 
     for card in cards:
-        # Название
         name_tag = card.find("div", class_="game-block-name")
         if not name_tag:
             continue
         name = name_tag.get_text(strip=True)
         name_lower = name.lower()
 
-        # Проверяем релевантность
+        # Базовая проверка релевантности
         matches = sum(1 for w in query_words if w in name_lower)
         if matches < max(1, len(query_words) // 2):
             continue
+
+        # Строгая проверка цифры сиквела — если в запросе есть "2", "3" и т.д.,
+        # название тоже обязано содержать именно эту цифру
+        if query_numbers:
+            name_numbers = re.findall(r'\d+', name_lower)
+            if not any(n in name_numbers for n in query_numbers):
+                logger.info(f"ZakaZaka: skipping '{name}' — sequel number mismatch")
+                continue
 
         # Цена
         price_tag = card.find("div", class_="game-block-price")
         if not price_tag:
             continue
-
         price_text = price_tag.get_text(strip=True)
         digits = re.sub(r"[^\d]", "", price_text)
         if not digits:
             continue
         price = int(digits)
 
-        # Оригинальная цена (до скидки)
+        # Оригинальная цена
         original_price = None
         discount_tag = card.find("div", class_="game-block-discount-sum")
         if discount_tag:
@@ -75,12 +77,10 @@ def parse_zakazaka_html(html: str, query: str) -> dict | None:
             if discount_text:
                 original_price = price + int(discount_text)
 
-        # Ссылка
         href = card.get("href", "")
         item_url = href if href.startswith("http") else BASE_URL + href
 
         logger.info(f"ZakaZaka found: {name} — {price} ₽")
-
         return {
             "store": "Zaka-Zaka",
             "price": price,
