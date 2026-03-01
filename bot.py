@@ -2,8 +2,10 @@ import asyncio
 import logging
 import os
 import time
+import re
 import cache
 import watchlist
+import stats
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import Command
 from aiogram.types import (
@@ -15,8 +17,6 @@ from dotenv import load_dotenv
 from steam_api import search_game_price
 
 load_dotenv()
-token = os.getenv("BOT_TOKEN")
-print(f"TOKEN: {token}")  # временно для отладки
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -24,7 +24,8 @@ logger = logging.getLogger(__name__)
 bot = Bot(token=os.getenv("BOT_TOKEN"))
 dp = Dispatcher()
 
-# Синонимы — короткое название -> реальное для поиска
+ADMIN_ID = 805949459
+
 ALIASES = {
     "gta 5": "Grand Theft Auto V",
     "gta v": "Grand Theft Auto V",
@@ -34,7 +35,6 @@ ALIASES = {
     "witcher 3": "The Witcher 3 Wild Hunt",
     "rdr2": "Red Dead Redemption 2",
     "rdr 2": "Red Dead Redemption 2",
-    "кибerpunk": "Cyberpunk 2077",
     "киберпанк": "Cyberpunk 2077",
     "ds3": "Dark Souls III",
     "dark souls 3": "Dark Souls III",
@@ -49,8 +49,6 @@ ALIASES = {
 
 def resolve_query(query: str) -> str:
     """Чистим запрос от эмодзи и лишних символов, заменяем синонимы."""
-    import re
-    # Убираем эмодзи и спецсимволы
     query = re.sub(r'[^\w\s\-\.\:\'\d]', '', query, flags=re.UNICODE).strip()
     query = re.sub(r'\s+', ' ', query).strip()
     return ALIASES.get(query.lower().strip(), query)
@@ -58,7 +56,12 @@ def resolve_query(query: str) -> str:
 
 def build_inline_buttons(prices: list, query: str, user_id: int):
     builder = InlineKeyboardBuilder()
-    store_icons = {"Steam": "🎮", "Plati.ru ⚠️": "🔑", "Zaka-Zaka": "🛒", "IgroShop ⚠️": "🏪"}
+    store_icons = {
+        "Steam": "🎮",
+        "Plati.ru ⚠️": "🔑",
+        "Zaka-Zaka": "🛒",
+        "IgroShop ⚠️": "🏪",
+    }
 
     sorted_prices = sorted(
         [p for p in prices if p.get("price")],
@@ -128,7 +131,6 @@ def build_response(results: dict, from_cache: bool, elapsed: float = None) -> st
 
 
 async def setup_commands():
-    """Настраиваем меню команд в Telegram."""
     commands = [
         BotCommand(command="start", description="🏠 Главное меню"),
         BotCommand(command="watchlist", description="📋 Мои подписки на цены"),
@@ -141,8 +143,9 @@ async def setup_commands():
 
 @dp.message(Command("start"))
 async def cmd_start(message: Message):
+    stats.track_user(message.from_user.id, message.from_user.username, message.from_user.first_name)
     await message.answer(
-        "👋 Привет! Я сравниваю цены на игры в Steam, Plati.ru и Zaka-Zaka.\n\n"
+        "👋 Привет! Я сравниваю цены на игры в Steam, Plati.ru, Zaka-Zaka и IgroShop.\n\n"
         "📝 <b>Напиши название игры</b> и я найду лучшую цену:\n"
         "<code>Cyberpunk 2077</code>\n"
         "<code>Elden Ring</code>\n"
@@ -151,6 +154,36 @@ async def cmd_start(message: Message):
         parse_mode="HTML",
         reply_markup=ReplyKeyboardRemove()
     )
+
+
+@dp.message(Command("admin"))
+async def cmd_admin(message: Message):
+    if message.from_user.id != ADMIN_ID:
+        return
+
+    data = stats.get_stats()
+    if not data:
+        await message.answer("❌ Ошибка получения статистики.")
+        return
+
+    text = "📊 <b>Статистика бота</b>\n\n"
+    text += f"👥 <b>Пользователи:</b>\n"
+    text += f"  Всего: <b>{data['total_users']}</b>\n"
+    text += f"  Новых за неделю: <b>{data['new_users_week']}</b>\n"
+    text += f"  Активных сегодня: <b>{data['active_today']}</b>\n\n"
+
+    text += f"🔍 <b>Поиски:</b>\n"
+    text += f"  Всего: <b>{data['total_searches']}</b>\n"
+    text += f"  Сегодня: <b>{data['searches_today']}</b>\n\n"
+
+    text += f"🔔 <b>Подписок на цены:</b> {data['total_watchlist']}\n\n"
+
+    if data['top_queries']:
+        text += "🔥 <b>Топ запросов:</b>\n"
+        for i, (query, cnt) in enumerate(data['top_queries'], 1):
+            text += f"  {i}. {query} — {cnt} раз\n"
+
+    await message.answer(text, parse_mode="HTML")
 
 
 @dp.message(Command("popular"))
@@ -172,13 +205,14 @@ async def cmd_help(message: Message):
     await message.answer(
         "ℹ️ <b>Как пользоваться:</b>\n\n"
         "1. Напиши название игры на английском\n"
-        "2. Получи сравнение цен из трёх магазинов\n"
+        "2. Получи сравнение цен из четырёх магазинов\n"
         "3. Нажми кнопку чтобы перейти в магазин\n"
         "4. Нажми 🔔 чтобы следить за снижением цены\n\n"
         "<b>Магазины:</b>\n"
         "🎮 Steam — официальный\n"
         "🔑 Plati.ru — ключи (дешевле, но риск)\n"
-        "🛒 Zaka-Zaka — российский магазин\n\n"
+        "🛒 Zaka-Zaka — российский магазин\n"
+        "🏪 IgroShop — российский магазин ключей\n\n"
         "<b>Работают сокращения:</b>\n"
         "<code>GTA 5</code>, <code>RDR2</code>, <code>Ведьмак 3</code> и др.",
         parse_mode="HTML"
@@ -253,6 +287,7 @@ async def handle_unwatch(callback: CallbackQuery):
 
 @dp.message(F.text & ~F.text.startswith("/"))
 async def handle_text(message: Message):
+    stats.track_user(message.from_user.id, message.from_user.username, message.from_user.first_name)
     text = message.text.strip()
     question_words = ["сколько", "почём", "цена", "стоит", "стоимость", "как", "где", "что"]
     if any(text.lower().startswith(w) for w in question_words):
@@ -269,8 +304,8 @@ async def handle_text(message: Message):
 async def process_search(message: Message, query: str):
     user_id = message.from_user.id
     resolved = resolve_query(query)
-    if resolved != query:
-        logger.info(f"Alias: '{query}' -> '{resolved}'")
+
+    stats.track_search(user_id, resolved)
 
     cached = cache.get(resolved)
     if cached:
@@ -335,6 +370,10 @@ async def main():
     await setup_commands()
     asyncio.create_task(check_prices())
     await dp.start_polling(bot)
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
 
 
 if __name__ == "__main__":
