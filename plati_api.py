@@ -1,5 +1,6 @@
 import aiohttp
 import logging
+import re
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +43,7 @@ async def search_plati(session: aiohttp.ClientSession, query: str, usd_rate: flo
                 return None
 
             query_words = query.lower().split()
+            query_numbers = [w for w in query_words if re.match(r'^[\divxlc]+$', w) and not w.isalpha()]
 
             for item in items:
                 # Получаем русское название
@@ -53,6 +55,12 @@ async def search_plati(session: aiohttp.ClientSession, query: str, usd_rate: flo
                 matches = sum(1 for w in query_words if w in name_lower)
                 if matches < max(1, len(query_words) // 2):
                     continue
+
+                # Строгая проверка цифры сиквела
+                if query_numbers:
+                    name_numbers = re.findall(r'\d+', name_lower)
+                    if not name_numbers or not any(n in name_numbers for n in query_numbers):
+                        continue
 
                 price = item.get("price")
                 product_id = item.get("product_id")
