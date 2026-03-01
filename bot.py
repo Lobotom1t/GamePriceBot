@@ -211,6 +211,25 @@ async def cmd_watchlist(message: Message):
     await message.answer(text, parse_mode="HTML", reply_markup=builder.as_markup())
 
 
+
+@dp.message(Command("clearcache"))
+async def cmd_clearcache(message: Message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    args = message.text.split(maxsplit=1)
+    if len(args) < 2:
+        await message.answer("❗ Укажи название: /clearcache The Evil Within 2")
+        return
+    key = args[1].lower().strip()
+    pool = await __import__('db').get_pool()
+    async with pool.acquire() as conn:
+        result = await conn.execute("DELETE FROM cache WHERE key = $1", key)
+        deleted = result.split()[-1]
+    if deleted == "1":
+        await message.answer(f"✅ Кэш для <b>{args[1]}</b> очищен.", parse_mode="HTML")
+    else:
+        await message.answer(f"❌ Ключ <b>{args[1]}</b> не найден в кэше.", parse_mode="HTML")
+
 @dp.message(Command("cache"))
 async def cmd_cache(message: Message):
     n = await cache.size()
@@ -338,9 +357,6 @@ async def main():
     asyncio.create_task(check_prices())
     await dp.start_polling(bot)
 
-
-if __name__ == "__main__":
-    asyncio.run(main())
 
 if __name__ == "__main__":
     asyncio.run(main())
