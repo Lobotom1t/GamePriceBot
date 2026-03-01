@@ -15,6 +15,8 @@ from dotenv import load_dotenv
 from steam_api import search_game_price
 
 load_dotenv()
+token = os.getenv("BOT_TOKEN")
+print(f"TOKEN: {token}")  # временно для отладки
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
