@@ -48,13 +48,12 @@ ALIASES = {
 
 
 def resolve_query(query: str) -> str:
-    """Чистим запрос от эмодзи и лишних символов, заменяем синонимы."""
     query = re.sub(r'[^\w\s\-\.\:\'\d]', '', query, flags=re.UNICODE).strip()
     query = re.sub(r'\s+', ' ', query).strip()
     return ALIASES.get(query.lower().strip(), query)
 
 
-def build_inline_buttons(prices: list, query: str, user_id: int):
+async def build_inline_buttons(prices: list, query: str, user_id: int):
     builder = InlineKeyboardBuilder()
     store_icons = {
         "Steam": "🎮",
@@ -62,7 +61,6 @@ def build_inline_buttons(prices: list, query: str, user_id: int):
         "Zaka-Zaka": "🛒",
         "IgroShop ⚠️": "🏪",
     }
-
     sorted_prices = sorted(
         [p for p in prices if p.get("price")],
         key=lambda x: x["price"]
@@ -74,13 +72,11 @@ def build_inline_buttons(prices: list, query: str, user_id: int):
             text=f"{icon} {item['store'].replace(' ⚠️', '')} — {price_str}",
             url=item["url"]
         )
-
-    is_watching = watchlist.is_watching(user_id, query)
-    if is_watching:
+    is_w = await watchlist.is_watching(user_id, query)
+    if is_w:
         builder.button(text="🔕 Отписаться", callback_data=f"unwatch:{query}")
     else:
         builder.button(text="🔔 Следить за ценой", callback_data=f"watch:{query}")
-
     builder.adjust(1)
     return builder.as_markup()
 
@@ -93,40 +89,29 @@ def get_best_price(prices: list) -> int | None:
 def build_response(results: dict, from_cache: bool, elapsed: float = None) -> str:
     game_name = results["name"]
     prices = results["prices"]
-
     sorted_prices = sorted(
-        prices,
-        key=lambda x: x["price"] if x["price"] is not None else float("inf")
+        prices, key=lambda x: x["price"] if x["price"] is not None else float("inf")
     )
-
-    text = f"🎮 <b>{game_name}</b>\n\n"
-    text += "💰 <b>Сравнение цен:</b>\n"
-
+    text = f"🎮 <b>{game_name}</b>\n\n💰 <b>Сравнение цен:</b>\n"
     emojis = ["🥇", "🥈", "🥉"]
     for i, item in enumerate(sorted_prices):
         prefix = emojis[i] if i < 3 else "  "
         price_str = f"{item['price']:,} ₽".replace(",", " ") if item["price"] else "Нет в продаже"
-
         if i == 0 and item["price"]:
             line = f"{prefix} <b>{item['store']}</b> — <b>{price_str}</b> ✅"
         else:
             line = f"{prefix} {item['store']} — {price_str}"
-
         if item.get("original_price") and item["original_price"] != item["price"] and item["price"]:
             original_str = f"{item['original_price']:,} ₽".replace(",", " ")
             discount = round((1 - item["price"] / item["original_price"]) * 100)
             line += f" <s>{original_str}</s> (-{discount}%)"
-
         text += line + "\n"
-
     if sorted_prices and sorted_prices[0].get("warning"):
         text += "\n⚠️ <i>Лучшая цена — ключ активации. Покупай на свой риск.</i>\n"
-
     if from_cache:
         text += "\n⚡️ <i>Из кэша · обновляется раз в сутки</i>"
     elif elapsed:
         text += f"\n⏱ <i>Найдено за {elapsed}с</i>"
-
     return text
 
 
@@ -143,7 +128,7 @@ async def setup_commands():
 
 @dp.message(Command("start"))
 async def cmd_start(message: Message):
-    stats.track_user(message.from_user.id, message.from_user.username, message.from_user.first_name)
+    await stats.track_user(message.from_user.id, message.from_user.username, message.from_user.first_name)
     await message.answer(
         "👋 Привет! Я сравниваю цены на игры в Steam, Plati.ru, Zaka-Zaka и IgroShop.\n\n"
         "📝 <b>Напиши название игры</b> и я найду лучшую цену:\n"
@@ -160,39 +145,30 @@ async def cmd_start(message: Message):
 async def cmd_admin(message: Message):
     if message.from_user.id != ADMIN_ID:
         return
-
-    data = stats.get_stats()
+    data = await stats.get_stats()
     if not data:
         await message.answer("❌ Ошибка получения статистики.")
         return
-
     text = "📊 <b>Статистика бота</b>\n\n"
     text += f"👥 <b>Пользователи:</b>\n"
     text += f"  Всего: <b>{data['total_users']}</b>\n"
     text += f"  Новых за неделю: <b>{data['new_users_week']}</b>\n"
     text += f"  Активных сегодня: <b>{data['active_today']}</b>\n\n"
-
     text += f"🔍 <b>Поиски:</b>\n"
     text += f"  Всего: <b>{data['total_searches']}</b>\n"
     text += f"  Сегодня: <b>{data['searches_today']}</b>\n\n"
-
     text += f"🔔 <b>Подписок на цены:</b> {data['total_watchlist']}\n\n"
-
     if data['top_queries']:
         text += "🔥 <b>Топ запросов:</b>\n"
         for i, (query, cnt) in enumerate(data['top_queries'], 1):
             text += f"  {i}. {query} — {cnt} раз\n"
-
     await message.answer(text, parse_mode="HTML")
 
 
 @dp.message(Command("popular"))
 async def cmd_popular(message: Message):
-    popular = [
-        "Cyberpunk 2077", "GTA 5", "Elden Ring",
-        "Red Dead Redemption 2", "Space Marine 2",
-        "Hogwarts Legacy", "Dark Souls III", "Witcher 3",
-    ]
+    popular = ["Cyberpunk 2077", "GTA 5", "Elden Ring", "Red Dead Redemption 2",
+               "Space Marine 2", "Hogwarts Legacy", "Dark Souls III", "Witcher 3"]
     text = "🔥 <b>Популярные игры:</b>\n\n"
     for game in popular:
         text += f"• <code>{game}</code>\n"
@@ -221,31 +197,24 @@ async def cmd_help(message: Message):
 
 @dp.message(Command("watchlist"))
 async def cmd_watchlist(message: Message):
-    items = watchlist.get_user_list(message.from_user.id)
+    items = await watchlist.get_user_list(message.from_user.id)
     if not items:
-        await message.answer(
-            "📋 Ты ни за чем не следишь.\n\n"
-            "Найди игру и нажми 🔔 Следить за ценой."
-        )
+        await message.answer("📋 Ты ни за чем не следишь.\n\nНайди игру и нажми 🔔 Следить за ценой.")
         return
-
     text = "📋 <b>Твои подписки:</b>\n\n"
     builder = InlineKeyboardBuilder()
     for item in items:
         price_str = f"{item['best_price']:,} ₽".replace(",", " ")
         text += f"🎮 {item['game_name']} — {price_str}\n"
         builder.button(text=f"❌ {item['game_name']}", callback_data=f"unwatch:{item['query']}")
-
     builder.adjust(1)
     await message.answer(text, parse_mode="HTML", reply_markup=builder.as_markup())
 
 
 @dp.message(Command("cache"))
 async def cmd_cache(message: Message):
-    await message.answer(
-        f"🗄 В кэше: <b>{cache.size()}</b> игр\n⏱ Время жизни: 24 часа",
-        parse_mode="HTML"
-    )
+    n = await cache.size()
+    await message.answer(f"🗄 В кэше: <b>{n}</b> игр\n⏱ Время жизни: 24 часа", parse_mode="HTML")
 
 
 @dp.message(Command("search"))
@@ -260,7 +229,7 @@ async def cmd_search(message: Message):
 @dp.callback_query(F.data.startswith("watch:"))
 async def handle_watch(callback: CallbackQuery):
     query = callback.data.split(":", 1)[1]
-    cached = cache.get(query)
+    cached = await cache.get(query)
     if not cached:
         await callback.answer("Сначала найди игру заново.", show_alert=True)
         return
@@ -268,33 +237,31 @@ async def handle_watch(callback: CallbackQuery):
     if not best_price:
         await callback.answer("Нет актуальной цены.", show_alert=True)
         return
-    added = watchlist.add(callback.from_user.id, query, cached["name"], best_price)
+    added = await watchlist.add(callback.from_user.id, query, cached["name"], best_price)
     await callback.answer(f"🔔 Слежу за {cached['name']}!" if added else "Уже следишь.")
-    buttons = build_inline_buttons(cached["prices"], query, callback.from_user.id)
+    buttons = await build_inline_buttons(cached["prices"], query, callback.from_user.id)
     await callback.message.edit_reply_markup(reply_markup=buttons)
 
 
 @dp.callback_query(F.data.startswith("unwatch:"))
 async def handle_unwatch(callback: CallbackQuery):
     query = callback.data.split(":", 1)[1]
-    removed = watchlist.remove(callback.from_user.id, query)
+    removed = await watchlist.remove(callback.from_user.id, query)
     await callback.answer("🔕 Подписка отменена." if removed else "Подписка не найдена.")
-    cached = cache.get(query)
+    cached = await cache.get(query)
     if cached:
-        buttons = build_inline_buttons(cached["prices"], query, callback.from_user.id)
+        buttons = await build_inline_buttons(cached["prices"], query, callback.from_user.id)
         await callback.message.edit_reply_markup(reply_markup=buttons)
 
 
 @dp.message(F.text & ~F.text.startswith("/"))
 async def handle_text(message: Message):
-    stats.track_user(message.from_user.id, message.from_user.username, message.from_user.first_name)
+    await stats.track_user(message.from_user.id, message.from_user.username, message.from_user.first_name)
     text = message.text.strip()
     question_words = ["сколько", "почём", "цена", "стоит", "стоимость", "как", "где", "что"]
     if any(text.lower().startswith(w) for w in question_words):
         await message.answer(
-            "🎮 Напиши просто <b>название игры</b>:\n"
-            "<code>Cyberpunk 2077</code>\n"
-            "<code>GTA 5</code>",
+            "🎮 Напиши просто <b>название игры</b>:\n<code>Cyberpunk 2077</code>\n<code>GTA 5</code>",
             parse_mode="HTML"
         )
         return
@@ -304,13 +271,12 @@ async def handle_text(message: Message):
 async def process_search(message: Message, query: str):
     user_id = message.from_user.id
     resolved = resolve_query(query)
+    await stats.track_search(user_id, resolved)
 
-    stats.track_search(user_id, resolved)
-
-    cached = cache.get(resolved)
+    cached = await cache.get(resolved)
     if cached:
         text = build_response(cached, from_cache=True)
-        buttons = build_inline_buttons(cached["prices"], resolved, user_id)
+        buttons = await build_inline_buttons(cached["prices"], resolved, user_id)
         await message.answer(text, parse_mode="HTML", reply_markup=buttons, disable_web_page_preview=True)
         return
 
@@ -321,14 +287,14 @@ async def process_search(message: Message, query: str):
 
     if not results:
         await searching_msg.edit_text(
-            f"😔 Игра <b>{query}</b> не найдена.\n\n"
-            "Попробуй написать полное название на английском.",
+            f"😔 Игра <b>{query}</b> не найдена.\n\nПопробуй написать полное название на английском.",
             parse_mode="HTML"
         )
         return
 
+    await cache.set(resolved, results)
     text = build_response(results, from_cache=False, elapsed=elapsed)
-    buttons = build_inline_buttons(results["prices"], resolved, user_id)
+    buttons = await build_inline_buttons(results["prices"], resolved, user_id)
     await searching_msg.edit_text(text, parse_mode="HTML", reply_markup=buttons, disable_web_page_preview=True)
 
 
@@ -336,7 +302,7 @@ async def check_prices():
     while True:
         await asyncio.sleep(86400)
         logger.info("Checking watchlist prices...")
-        items = watchlist.get_all()
+        items = await watchlist.get_all()
         for item in items:
             try:
                 results = await search_game_price(item["query"])
@@ -358,15 +324,16 @@ async def check_prices():
                         f"Напиши <code>{item['query']}</code> чтобы увидеть все цены".replace(",", " "),
                         parse_mode="HTML"
                     )
-                    watchlist.update_price(item["user_id"], item["query"], new_price)
+                    await watchlist.update_price(item["user_id"], item["query"], new_price)
                 await asyncio.sleep(2)
             except Exception as e:
                 logger.error(f"Price check error for {item['query']}: {e}")
 
 
 async def main():
-    cleared = cache.clear_expired()
-    logger.info(f"Bot started! Cache: {cache.size()} entries, cleared {cleared} expired")
+    cleared = await cache.clear_expired()
+    n = await cache.size()
+    logger.info(f"Bot started! Cache: {n} entries, cleared {cleared} expired")
     await setup_commands()
     asyncio.create_task(check_prices())
     await dp.start_polling(bot)
@@ -374,7 +341,6 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-
 
 if __name__ == "__main__":
     asyncio.run(main())
