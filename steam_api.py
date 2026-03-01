@@ -31,7 +31,7 @@ async def get_usd_rate(session: aiohttp.ClientSession) -> float:
 
 
 async def search_game_price(query: str) -> dict | None:
-    cached = cache.get(query)
+    cached = await cache.get(query)
     if cached:
         return cached
 
@@ -47,7 +47,6 @@ async def search_game_price(query: str) -> dict | None:
 
         logger.info(f"Found: {name} (id={app_id}), rate={usd_rate}")
 
-        # Steam и Plati параллельно
         steam_result, plati_result, zakazaka_result, igroshop_result = await asyncio.gather(
             get_steam_details(session, app_id, name),
             search_plati(session, query, usd_rate),
@@ -66,22 +65,15 @@ async def search_game_price(query: str) -> dict | None:
         if igroshop_result:
             prices.append(igroshop_result)
 
-        result = {
-            "name": steam_result["name"],
-            "app_id": app_id,
-            "prices": prices,
-        }
-
-        cache.set(query, result)
+        result = {"name": steam_result["name"], "app_id": app_id, "prices": prices}
+        await cache.set(query, result)
         return result
 
 
 async def find_app_id(session: aiohttp.ClientSession, query: str) -> tuple:
     params = {"term": query, "l": "russian", "cc": "US", "count": 5}
     try:
-        async with session.get(
-            STEAM_SEARCH_URL, params=params, timeout=aiohttp.ClientTimeout(total=15)
-        ) as resp:
+        async with session.get(STEAM_SEARCH_URL, params=params, timeout=aiohttp.ClientTimeout(total=15)) as resp:
             if resp.status != 200:
                 return None, None
             data = await resp.json(content_type=None)
@@ -101,7 +93,6 @@ async def get_steam_details(session: aiohttp.ClientSession, app_id: int, name: s
         async with session.get(url, timeout=aiohttp.ClientTimeout(total=15)) as resp:
             if resp.status != 200:
                 return None
-
             html = await resp.text()
             soup = BeautifulSoup(html, "html.parser")
 
@@ -125,11 +116,7 @@ async def get_steam_details(session: aiohttp.ClientSession, app_id: int, name: s
                     price_rub = parse_rub_price(game_purchase.get_text(strip=True))
 
             logger.info(f"Steam price: {price_rub} RUB")
-
-            return {
-                "name": name,
-                "prices": [{"store": "Steam", "price": price_rub, "original_price": original_rub, "url": url}],
-            }
+            return {"name": name, "prices": [{"store": "Steam", "price": price_rub, "original_price": original_rub, "url": url}]}
     except Exception as e:
         logger.error(f"Steam parse error: {e}")
         return None
