@@ -4,3 +4,4 @@ python-dotenv==1.0.1
 beautifulsoup4
 requests
 python-dotenv
+playwright==1.44.0
