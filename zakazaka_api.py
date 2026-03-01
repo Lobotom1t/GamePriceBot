@@ -55,7 +55,8 @@ def parse_zakazaka_html(html: str, query: str) -> dict | None:
         # название тоже обязано содержать именно эту цифру
         if query_numbers:
             name_numbers = re.findall(r'\d+', name_lower)
-            if not any(n in name_numbers for n in query_numbers):
+            # Если в запросе есть цифра — название без цифры тоже не подходит
+            if not name_numbers or not any(n in name_numbers for n in query_numbers):
                 logger.info(f"ZakaZaka: skipping '{name}' — sequel number mismatch")
                 continue
 
