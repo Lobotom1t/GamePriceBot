@@ -70,6 +70,7 @@ async def find_item(session: aiohttp.ClientSession, query: str) -> tuple[str, st
                 return None, None
 
             query_words = query.lower().split()
+            query_numbers = [w for w in query_words if re.match(r'^[\divxlc]+$', w) and not w.isalpha()]
             skip_words = ["dlc", "soundtrack", "season pass", "xbox", "playstation", "ps4", "ps5"]
 
             for item in items:
@@ -84,6 +85,12 @@ async def find_item(session: aiohttp.ClientSession, query: str) -> tuple[str, st
                 matches = sum(1 for w in query_words if w in name_lower)
                 if matches < max(1, len(query_words) // 2):
                     continue
+
+                # Строгая проверка цифры сиквела
+                if query_numbers:
+                    name_numbers = re.findall(r'\d+', name_lower)
+                    if not name_numbers or not any(n in name_numbers for n in query_numbers):
+                        continue
 
                 url = item.get("link", "")
                 if not url:
